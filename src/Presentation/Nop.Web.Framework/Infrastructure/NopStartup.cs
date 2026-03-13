@@ -24,6 +24,7 @@ using Nop.Services.Customers;
 using Nop.Services.Directory;
 using Nop.Services.Discounts;
 using Nop.Services.Events;
+using Nop.Services.Observability;
 using Nop.Services.ExportImport;
 using Nop.Services.FilterLevels;
 using Nop.Services.Gdpr;
@@ -231,7 +232,12 @@ public partial class NopStartup : INopStartup
         services.AddScoped<IExternalAuthenticationService, ExternalAuthenticationService>();
         services.AddSingleton<IRoutePublisher, RoutePublisher>();
         services.AddScoped<IReviewTypeService, ReviewTypeService>();
-        services.AddSingleton<IEventPublisher, EventPublisher>();
+        // Register EventPublisher as a concrete type first, then wrap it with the observability
+        // decorator so every domain event automatically gets an OTel span. One registration
+        // change — no modifications to any service class.
+        services.AddSingleton<EventPublisher>();
+        services.AddSingleton<IEventPublisher>(sp =>
+            new ObservabilityEventPublisher(sp.GetRequiredService<EventPublisher>()));
         services.AddScoped<ISettingService, SettingService>();
         services.AddScoped<IBBCodeHelper, BBCodeHelper>();
         services.AddScoped<IHtmlFormatter, HtmlFormatter>();

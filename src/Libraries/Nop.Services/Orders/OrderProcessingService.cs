@@ -1,5 +1,7 @@
-﻿using System.Globalization;
+﻿using System.Diagnostics;
+using System.Globalization;
 using Newtonsoft.Json;
+using Nop.Services.Observability;
 using Nop.Core;
 using Nop.Core.Caching;
 using Nop.Core.Domain.Catalog;
@@ -1387,6 +1389,13 @@ public partial class OrderProcessingService : IOrderProcessingService
     /// </returns>
     protected virtual async Task<ProcessPaymentResult> GetProcessPaymentResultAsync(ProcessPaymentRequest processPaymentRequest, PlaceOrderContainer details)
     {
+        // Child span for the payment step specifically, tagged with the payment method system name.
+        // No card data or customer identifiers are attached — only the plugin name (e.g.
+        // "Payments.CheckMoneyOrder") which is safe and operationally useful for correlating
+        // payment gateway latency to a specific provider.
+        using var activity = NopActivitySource.Source.StartActivity("order.payment", ActivityKind.Client);
+        activity?.SetTag("payment.method", processPaymentRequest.PaymentMethodSystemName);
+
         //process payment
         ProcessPaymentResult processPaymentResult;
         //check if is payment workflow required
@@ -1576,6 +1585,13 @@ public partial class OrderProcessingService : IOrderProcessingService
 
         async Task<PlaceOrderResult> placeOrder(PlaceOrderContainer placeOrderContainer)
         {
+            // Span covers the full placement pipeline: payment → persist → events.
+            // Only safe identifiers are attached — no customer PII, no card data.
+            using var activity = NopActivitySource.Source.StartActivity("order.placement", ActivityKind.Internal);
+            activity?.SetTag("order.guid", processPaymentRequest.OrderGuid.ToString());
+            activity?.SetTag("order.store_id", processPaymentRequest.StoreId.ToString());
+            var sw = Stopwatch.StartNew();
+
             var result = new PlaceOrderResult();
 
             try
@@ -1629,12 +1645,31 @@ public partial class OrderProcessingService : IOrderProcessingService
                         result.AddError(string.Format(
                             await _localizationService.GetResourceAsync("Checkout.PaymentError"), paymentError));
                     }
+
+                    // Record the failure metric tagged with a sanitised reason so operators can
+                    // distinguish transient gateway errors from declined cards without logging PII.
+                    // The reason is truncated to avoid accidentally capturing card numbers that
+                    // some payment plugins may include in error messages.
+                    var rawReason = processPaymentResult.Errors.FirstOrDefault() ?? "unknown";
+                    var sanitisedReason = rawReason.Length > 64 ? rawReason[..64] : rawReason;
+                    NopActivitySource.PaymentFailures.Add(1,
+                        new KeyValuePair<string, object>("payment.method", processPaymentRequest.PaymentMethodSystemName),
+                        new KeyValuePair<string, object>("reason", sanitisedReason));
+                    activity?.SetStatus(ActivityStatusCode.Error, "payment_failed");
                 }
             }
             catch (Exception exc)
             {
+                activity?.SetStatus(ActivityStatusCode.Error, exc.GetType().Name);
                 await _logger.ErrorAsync(exc.Message, exc);
                 result.AddError(exc.Message);
+            }
+            finally
+            {
+                // Always record duration whether the order succeeded or failed.
+                NopActivitySource.OrderPlacementDuration.Record(
+                    sw.Elapsed.TotalMilliseconds,
+                    new KeyValuePair<string, object>("success", result.Success));
             }
 
             if (result.Success)
