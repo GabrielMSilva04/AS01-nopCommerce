@@ -1,18 +1,103 @@
 services:
-    nopcommerce_web:
-        build: .
-        container_name: nopcommerce
-        ports:
-            - "80:80"
-        depends_on:
-            - nopcommerce_database
-    nopcommerce_database:
-        image: "mcr.microsoft.com/mssql/server:2019-latest"
-        container_name: nopcommerce_mssql_server
-        environment:
-            SA_PASSWORD: "nopCommerce_db_password"
-            ACCEPT_EULA: "Y"
-            MSSQL_PID: "Express"
+
+  # ──────────────────────────────────────────────
+  # Application
+  # ──────────────────────────────────────────────
+  nopcommerce_web:
+    build: .
+    container_name: nopcommerce
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      # Route all OTLP telemetry through the collector
+      OpenTelemetry__OtlpEndpoint: "http://otel-collector:4317"
+      OpenTelemetry__ServiceName: "nopcommerce"
+    depends_on:
+      nopcommerce_database:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+
+  nopcommerce_database:
+    image: "mcr.microsoft.com/mssql/server:2019-latest"
+    container_name: nopcommerce_mssql_server
+    environment:
+      SA_PASSWORD: "nopCommerce_db_password"
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: "Express"
+    healthcheck:
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "nopCommerce_db_password" -No -Q "SELECT 1" || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ──────────────────────────────────────────────
+  # Observability pipeline
+  # ──────────────────────────────────────────────
+
+  # Receives OTLP from nopCommerce, fans out to Tempo (traces)
+  # and exposes a Prometheus /metrics scrape endpoint (metrics).
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.147.0
+    container_name: otel-collector
+    volumes:
+      - ./observability/otel-collector-config.yml:/etc/otelcol-contrib/config.yaml
+    ports:
+      - "4317:4317"   # OTLP gRPC (nopCommerce sends here)
+      - "4318:4318"   # OTLP HTTP (optional)
+      - "8889:8889"   # Prometheus scrape endpoint (metrics)
+    depends_on:
+      - tempo
+
+  # Distributed trace storage — receives OTLP from the collector
+  tempo:
+    image: grafana/tempo:2.10.2
+    container_name: tempo
+    command: ["-config.file=/etc/tempo.yml"]
+    volumes:
+      - ./observability/tempo.yml:/etc/tempo.yml
+      - tempo_data:/var/tempo
+    ports:
+      - "3200:3200"   # HTTP API (Grafana queries here)
+
+  # Time-series metrics store — scrapes the collector's /metrics endpoint
+  prometheus:
+    image: prom/prometheus:v3.10.0
+    container_name: prometheus
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+
+  # Dashboard UI — auto-provisioned with Tempo + Prometheus data sources
+  # and the nopCommerce order-flow dashboard
+  grafana:
+    image: grafana/grafana:12.4.1
+    container_name: grafana
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards
+      - grafana_data:/var/lib/grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: "admin"
+      GF_SECURITY_ADMIN_PASSWORD: "admin"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_NAME: "Main Org."
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - tempo
+      - prometheus
 
 volumes:
-  nopcommerce_data:            
+  nopcommerce_data:
+  tempo_data:
+  prometheus_data:
+  grafana_data:

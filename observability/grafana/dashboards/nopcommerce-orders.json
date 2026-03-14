@@ -1,0 +1,318 @@
+{
+  "title": "nopCommerce — Order Placement Flow",
+  "uid": "nop-order-flow",
+  "description": "End-to-end health of the checkout pipeline: latency, payment failures, HTTP errors and distributed traces. All panels share the same time range — narrow it to zoom into an incident.",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "timezone": "browser",
+  "tags": ["nopcommerce", "orders", "observability"],
+  "graphTooltip": 1,
+  "panels": [
+
+    {
+      "id": 1,
+      "type": "row",
+      "title": "At a Glance",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Orders Placed (last 1 h)",
+      "description": "How many checkout pipelines completed in the last hour. A sudden drop signals a blocking issue upstream.",
+      "gridPos": { "x": 0, "y": 1, "w": 8, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "green", "value": 5 }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(order_placement_duration_milliseconds_count)",
+          "legendFormat": "orders",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Payment Failures (last 5 m)",
+      "description": "Raw count of payment failures. Spikes that are all the same reason indicate a gateway outage; varied reasons indicate normal card declines.",
+      "gridPos": { "x": 8, "y": 1, "w": 8, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(order_payment_failures_total) or vector(0)",
+          "legendFormat": "failures",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Checkout Error Rate",
+      "description": "Fraction of checkout HTTP requests that returned 5xx. Even a small percentage means customers are hitting errors.",
+      "gridPos": { "x": 16, "y": 1, "w": 8, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
+            ]
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\", url_route=~\".*(checkout|Checkout).*\"}[5m])) / sum(rate(http_server_request_duration_seconds_count{url_route=~\".*(checkout|Checkout).*\"}[5m]))",
+          "legendFormat": "error rate",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 5,
+      "type": "row",
+      "title": "Latency",
+      "gridPos": { "x": 0, "y": 5, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Order Placement Duration — p50 / p95 / p99",
+      "description": "End-to-end checkout pipeline latency. A rising p95 or p99 while p50 stays flat means a tail-latency problem (slow payment gateway, DB lock contention). Separate lines for success=true/false reveal whether slowness correlates with failures.",
+      "gridPos": { "x": 0, "y": 6, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "p50" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byName", "options": "p95" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] },
+          { "matcher": { "id": "byName", "options": "p99" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(order_placement_duration_milliseconds_bucket[5m])))",
+          "legendFormat": "p50 (rate)",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(order_placement_duration_milliseconds_bucket[5m])))",
+          "legendFormat": "p95 (rate)",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(order_placement_duration_milliseconds_bucket[5m])))",
+          "legendFormat": "p99 (rate)",
+          "refId": "C"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "order_placement_duration_milliseconds_sum / order_placement_duration_milliseconds_count",
+          "legendFormat": "avg (instant)",
+          "refId": "D"
+        }
+      ]
+    },
+
+    {
+      "id": 7,
+      "type": "row",
+      "title": "Failures",
+      "gridPos": { "x": 0, "y": 14, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Payment Failures — Rate by Reason",
+      "description": "Rate of payment failures grouped by the first error returned by the payment plugin. Gateway outages produce a single dominant reason; card declines produce a variety of reasons. Use this to decide whether to page the gateway team or treat it as noise.",
+      "gridPos": { "x": 0, "y": 15, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "sum"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (failure_reason) (rate(order_payment_failures_total[5m]))",
+          "legendFormat": "{{ failure_reason }}",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Checkout HTTP Error Rate — 4xx vs 5xx",
+      "description": "HTTP error rate for all checkout routes. 5xx = server-side failures; 4xx = client errors (validation, expired sessions). A 5xx spike with no 4xx change points to an infrastructure or service failure, not bad user input.",
+      "gridPos": { "x": 12, "y": 15, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "5xx" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] },
+          { "matcher": { "id": "byName", "options": "4xx" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\", url_route=~\".*(checkout|Checkout).*\"}[5m]))",
+          "legendFormat": "5xx",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"4..\", url_route=~\".*(checkout|Checkout).*\"}[5m]))",
+          "legendFormat": "4xx",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Traces",
+      "gridPos": { "x": 0, "y": 23, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Order Placement Traces",
+      "description": "Recent distributed traces for the order placement flow. Each row is one request — click the Trace ID link to open the full span waterfall in Tempo and see exactly where time was spent (HTTP handler → payment → DB persistence → domain events).",
+      "gridPos": { "x": 0, "y": 24, "w": 24, "h": 12 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "options": {
+        "frameType": "Trace",
+        "sortBy": [{ "displayName": "Start time", "desc": true }]
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "traceID" },
+            "properties": [
+              { "id": "displayName", "value": "Trace ID" },
+              { "id": "links", "value": [{ "title": "Open in Tempo", "url": "http://localhost:3000/explore?left=%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22queryType%22%3A%22traceId%22%2C%22query%22%3A%22${__value.raw}%22%7D%5D%7D" }] }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{resource.service.name=\"nopcommerce\"}",
+          "limit": 20,
+          "refId": "A"
+        }
+      ]
+    }
+
+  ]
+}

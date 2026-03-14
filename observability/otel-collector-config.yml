@@ -1,0 +1,38 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+
+exporters:
+  # Forward traces to Tempo via OTLP gRPC (internal docker network)
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Expose metrics for Prometheus to scrape at :8889/metrics.
+  # metric_expiration removes series 2 minutes after the source stops sending,
+  # so restarted containers don't accumulate ghost series in Prometheus.
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    metric_expiration: 2m
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/tempo]
+
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
