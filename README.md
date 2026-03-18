@@ -1,80 +1,194 @@
-﻿﻿nopCommerce: free and open-source eCommerce solution
-===========
+# nopCommerce + OpenTelemetry — Assignment 01
 
-[nopCommerce](https://www.nopcommerce.com/?utm_source=github&utm_medium=content&utm_campaign=homepage) is the best open-source eCommerce platform. nopCommerce is free, and it is the most popular ASP.NET Core shopping cart.
+> Software Architectures · Master in Informatics Engineering
+> Fork of [nopSolutions/nopCommerce](https://github.com/nopSolutions/nopCommerce) with end-to-end observability instrumentation.
 
-![nopCommerce demo](https://www.nopcommerce.com/images/github/responsive_devices_codeplex.png#v1)
+---
 
-### Key features ###
+## What Was Added
 
-* The product is being developed and supported by the professional team since 2008.
-* nopCommerce has been downloaded more than 3,000,000 times.
-* The active developer community has more than 250,000 members.
-* nopCommerce runs on .NET 9 with an MS SQL 2012 (or higher) backend database.
-* nopCommerce is cross-platform, and you can run it on Windows, Linux, or Mac.
-* nopCommerce supports Docker out of the box, so you can easily run nopCommerce on a Linux machine.
-* nopCommerce supports PostgreSQL and MySQL databases.
-* nopCommerce fully supports web farms. You can read more about it [here](https://docs.nopcommerce.com/en/developer/tutorials/web-farms.html?utm_source=github&utm_medium=referral&utm_campaign=documentation&utm_content=text).  
-* All methods in nopCommerce are async.
-* nopCommerce supports multi-factor authentication out of the box.
-* Start our [online course for developers](https://nopcommerce.com/training?utm_source=github&utm_medium=referral&utm_campaign=course&utm_content=text) and get the practical and technical skills you need to run and customize nopCommerce websites.
+This fork instruments the **order placement flow** with OpenTelemetry. Every customer checkout — from `POST /checkout/confirm` through payment processing to database persistence — produces distributed traces, custom metrics, and a Grafana dashboard.
 
-![Logo](https://www.nopcommerce.com/images/github/logos.png#v2)
+| Deliverable | Location |
+|---|---|
+| Architecture analysis | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
+| Instrumentation critique | [`CRITIQUE.md`](CRITIQUE.md) |
+| Grafana dashboard JSON | [`observability/grafana/dashboards/`](observability/grafana/dashboards/) |
+| k6 load test | [`loadtest/checkout-flow.js`](loadtest/checkout-flow.js) |
+| OTel startup config | [`src/Presentation/Nop.Web.Framework/Infrastructure/ObservabilityStartup.cs`](src/Presentation/Nop.Web.Framework/Infrastructure/ObservabilityStartup.cs) |
 
-nopCommerce architecture follows well-known software patterns and the best security practices. The source code is fully customizable. Pluggable and clear architecture makes it easy to develop custom functionality and follow any business requirements.
+---
 
-Using the latest Microsoft technologies, nopCommerce provides high performance, stability, and security. nopCommerce is also fully compatible with Azure and web farms.
+## Architecture
 
-Our clear and detailed [documentation](https://docs.nopcommerce.com/developer/index.html?utm_source=github&utm_medium=referral&utm_campaign=documentation&utm_content=text) and [online course](https://nopcommerce.com/training?utm_source=github&utm_medium=referral&utm_campaign=course&utm_content=text) for developers will help you start with nopCommerce easily.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        nopCommerce                              │
+│                                                                 │
+│  Browser ──► CheckoutController (Nop.Web)                       │
+│                       │                                         │
+│                       ▼                                         │
+│           OrderProcessingService (Nop.Services)                 │
+│             │  ┌──────────────────────────────┐                 │
+│             │  │  ActivitySource spans:        │                 │
+│             │  │  • order.placement (full)     │                 │
+│             │  │  • order.payment              │                 │
+│             │  │  • event.publish (decorator)  │                 │
+│             │  └──────────────────────────────┘                 │
+│             │                                                   │
+│             ▼                                                   │
+│           IEventPublisher  ◄── ObservabilityEventPublisher      │
+│             └─► OrderPlacedEvent, OrderPaidEvent, ...           │
+│                                                                 │
+│  OTel SDK  ──►  PiiScrubProcessor  ──►  OTLP exporter           │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ gRPC :4317
+                             ▼
+                    ┌─────────────────┐
+                    │  OTel Collector │  fans out:
+                    └────┬───────┬───┘
+                         │       │
+                    traces│       │metrics (scrape)
+                         ▼       ▼
+                      Tempo   Prometheus
+                         │       │
+                         └───┬───┘
+                             ▼
+                          Grafana :3000
+```
 
+### Layer Stack
 
-### The advantages of working with nopCommerce ###
+```
+Nop.Web  →  Nop.Web.Framework  →  Nop.Services  →  Nop.Data  →  Nop.Core
+```
 
-nopCommerce offers powerful [out-of-the-box features](https://www.nopcommerce.com/features?utm_source=github&utm_medium=referral&utm_campaign=features&utm_content=text) for creating an online store of any size and type.
+New files added:
 
-nopCommerce is integrated with all the popular third-party services. You can find thousands of integrations on nopCommerce [Marketplace](https://www.nopcommerce.com/marketplace?utm_source=github&utm_medium=referral&utm_campaign=marketplace&utm_content=text).
+| File | Layer | Purpose |
+|---|---|---|
+| `Nop.Services/Observability/NopActivitySource.cs` | Services | Shared `ActivitySource` + `Meter` + metrics definitions |
+| `Nop.Services/Events/ObservabilityEventPublisher.cs` | Services | `IEventPublisher` decorator — wraps every event publish with a span |
+| `Nop.Web.Framework/Observability/PiiScrubProcessor.cs` | Framework | `BaseProcessor<Activity>` — strips PII attributes before OTLP export |
+| `Nop.Web.Framework/Infrastructure/ObservabilityStartup.cs` | Framework | OTel SDK registration (TracerProvider + MeterProvider) |
 
-The [Web API plugin](https://www.nopcommerce.com/web-api?utm_source=github&utm_medium=referral&utm_campaign=WebAPI&utm_content=text) by the nopCommerce team lets you build integrations with third-party services or mobile applications using REST. The Web API plugin is available with source code and covers all methods of nopCommerce: backend and frontend. You can read more about it [here](https://www.nopcommerce.com/web-api?utm_source=github&utm_medium=referral&utm_campaign=WebAPI&utm_content=text).
+---
 
-Friendly members of the [nopCommerce community](https://www.nopcommerce.com/boards?utm_source=github&utm_medium=referral&utm_campaign=forum&utm_content=text) will always help with advice and share their experiences. nopCommerce core development team provides [professional support](https://www.nopcommerce.com/nopcommerce-premium-support-services?utm_source=github&utm_medium=referral&utm_campaign=premium_support&utm_content=text) within 24 hours.
+## Quick Start
 
+### Prerequisites
 
-## Store demo ##
+- [Docker](https://docs.docker.com/get-docker/) + Docker Compose v2
+- Ports 80, 3000, 4317, 9090, 3200 free
 
-Evaluate the functionality and convenience of nopCommerce as a customer and store owner.
+### 1. Clone and start
 
-Front End | Admin area
-----|------
-[![ScreenShot](https://www.nopcommerce.com/images/github/public-demo.png#v1)](https://demo.nopcommerce.com?utm_source=github&utm_medium=referral&utm_campaign=demo_store&utm_content=button) | [![ScreenShot](https://www.nopcommerce.com/images/github/admin-demo.png#v1)](https://admin-demo.nopcommerce.com/admin?utm_source=github&utm_medium=referral&utm_campaign=demo_store&utm_content=button)
+```bash
+git clone <your-fork-url>
+cd AS01-nopCommerce
+docker compose up -d --build
+```
 
+The first start takes 3–5 minutes. nopCommerce will run the store wizard on first boot.
 
-### nopCommerce resources ###
+### 2. First-time store setup
 
-nopCommerce official site: [https://www.nopcommerce.com](https://www.nopcommerce.com/?utm_source=github&utm_medium=referral&utm_campaign=homepage&utm_content=links)
+1. Open `http://localhost` in your browser
+2. Follow the installation wizard:
+   - **Database:** SQL Server, server `nopcommerce_mssql_server`, user `sa`, password `nopCommerce_db_password`
+   - Fill in store name and admin credentials
+3. Wait for setup to complete (~2 min)
 
-* [Demo store](https://www.nopcommerce.com/demo?utm_source=github&utm_medium=referral&utm_campaign=demo_store&utm_content=links)
-* [Download nopCommerce](https://www.nopcommerce.com/download-nopcommerce?utm_source=github&utm_medium=referral&utm_campaign=download_nop&utm_content=links)
-* [Online course for developers](https://nopcommerce.com/training?utm_source=github&utm_medium=referral&utm_campaign=course&utm_content=links)
-* [Feature list](https://www.nopcommerce.com/features?utm_source=github&utm_medium=referral&utm_campaign=features&utm_content=links)
-* [Web API plugin](https://www.nopcommerce.com/web-api?utm_source=github&utm_medium=referral&utm_campaign=WebAPI&utm_content=links)
-* [nopCommerce documentation](https://docs.nopcommerce.com?utm_source=github&utm_medium=referral&utm_campaign=documentation&utm_content=links)
-* [Community forums](https://www.nopcommerce.com/boards?utm_source=github&utm_medium=referral&utm_campaign=forum&utm_content=links)
-* [Premium support services](https://www.nopcommerce.com/nopcommerce-premium-support-services?utm_source=github&utm_medium=referral&utm_campaign=premium_support&utm_content=links)
-* [Certified developer program](https://www.nopcommerce.com/certified-developer-program?utm_source=github&utm_medium=referral&utm_campaign=certified_developer&utm_content=links)
-* [nopCommerce partners](https://www.nopcommerce.com/partners?utm_source=github&utm_medium=referral&utm_campaign=solution_partners&utm_content=links)
+### 3. Verify observability stack
 
-nopCommerce YouTube: [The Architecture behind the nopCommerce eCommerce Platform](https://www.youtube.com/watch?v=6gLbizzSA9o&list=PLnL_aDfmRHwtJmzeA7SxrpH3-XDY2ue0a)
+| Service | URL | Credentials |
+|---|---|---|
+| nopCommerce | `http://localhost` | (your store admin) |
+| Grafana | `http://localhost:3000` | admin / admin |
+| Prometheus | `http://localhost:9090` | — |
+| Tempo | `http://localhost:3200` | — |
 
+### 4. Run the load test
 
-### Earn with nopCommerce ###
+```bash
+# Install k6: https://k6.io/docs/get-started/installation/
+k6 run loadtest/checkout-flow.js
+```
 
-60,000 stores worldwide are powered by nopCommerce, and 10,000 new stores open every year. nopCommerce [solution partners’ directory](https://www.nopcommerce.com/partners?utm_source=github&utm_medium=referral&utm_campaign=solution_partners&utm_content=text_become_partner) gets 80,000+ page views per year from store owners who are looking for a partner to build a store from scratch, migrate from another platform, or improve and customize an existing store.
+Available scenarios (set via environment variable):
 
-Become a solution partner of nopCommerce and get new clients – [learn more](https://www.nopcommerce.com/become-partner?utm_source=github&utm_medium=referral&utm_campaign=become-partner&utm_content=learn_more).
+```bash
+k6 run -e SCENARIO=smoke  loadtest/checkout-flow.js   # 1 VU, 1 min  (default)
+k6 run -e SCENARIO=load   loadtest/checkout-flow.js   # ramp to 10 VUs, 14 min
+k6 run -e SCENARIO=stress loadtest/checkout-flow.js   # ramp to 50 VUs, 30 min
+```
 
-Create a new graphical theme or develop a new plugin or integration and sell it on the nopCommerce [Marketplace](https://www.nopcommerce.com/marketplace?utm_source=github&utm_medium=referral&utm_campaign=marketplace&utm_content=text_sell_on_marketplace).
+### 5. Open the dashboard
 
+Go to `http://localhost:3000` → **Dashboards** → **nopCommerce Order Flow**.
 
-### Contribute ###
+---
 
-As a free and open-source project, we are very grateful to everyone who helps us to develop nopCommerce. Please find more details about the options and bonuses for contributors at [contribute page](https://www.nopcommerce.com/contribute?utm_source=github&utm_medium=referral&utm_campaign=contribute&utm_content=text).
+## Instrumentation Details
+
+### Traces
+
+Every `POST /checkout/confirm` request produces a trace with three nested spans:
+
+```
+HTTP POST /checkout/confirm           (ASP.NET Core auto-instrumentation)
+  └── order.placement                 (OrderProcessingService.PlaceOrderAsync)
+        └── order.payment             (payment plugin call)
+              └── event.publish       (ObservabilityEventPublisher — per-event)
+```
+
+**Safe span attributes** (no PII):
+`order.id`, `order.customer_id`, `order.status`, `order.payment_status`, `order.total`, `order.store_id`
+
+**Stripped by `PiiScrubProcessor`**:
+`CardNumber`, `CardCvv2`, `Email`, `FirstName`, `LastName`, `PhoneNumber`, `Address1`, `CustomerIp`
+
+### Custom Metrics
+
+| Metric | Type | Description |
+|---|---|---|
+| `order.placement.duration` (ms) | Histogram | End-to-end order placement latency. Operational use: rising p95 signals checkout pipeline degradation before users start seeing timeouts. |
+| `order.payment.failures` | Counter | Payment processing failures tagged by error reason. Operational use: distinguishes gateway outages (all errors the same) from declined cards (varied). |
+
+### Grafana Dashboard Panels
+
+1. **Orders Placed (last 1 h)** — `max(order_placement_duration_ms_count)` stat
+2. **Payment Failures** — `max(order_payment_failures_total)` stat
+3. **Checkout Error Rate** — `rate(http_server_request_duration_count{...status_code=~"5.*"})` timeseries
+4. **Order Placement Duration p95** — `histogram_quantile(0.95, ...)` timeseries
+5. **Order Placement Traces** — Tempo trace panel (TraceQL search on service `nopcommerce`)
+
+---
+
+## Resetting the Environment
+
+If the database needs to be recreated:
+
+```bash
+docker compose down -v          # removes all volumes including DB
+docker compose up -d --build    # rebuild and restart
+# re-run store wizard at http://localhost
+```
+
+If nopCommerce fails to connect after MSSQL recreation, the stale config file needs clearing:
+
+```bash
+docker exec nopcommerce rm -f /app/App_Data/appsettings.json
+docker restart nopcommerce
+```
+
+---
+
+## Load Test Results (reference run)
+
+| Scenario | VUs | Duration | Orders placed | Success rate | p95 latency |
+|---|---|---|---|---|---|
+| smoke | 1 | 1 min | 1 | 100% | ~120 ms |
+| load | 10 | 14 min | 214 | 100% | 119 ms |
+
+All HTTP requests: 0% failure rate. All 18 checkout checks passing at 100%.
