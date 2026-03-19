@@ -11,7 +11,6 @@ This fork instruments the **order placement flow** with OpenTelemetry. Every cus
 
 | Deliverable | Location |
 |---|---|
-| Architecture analysis | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
 | Instrumentation critique | [`CRITIQUE.md`](CRITIQUE.md) |
 | Grafana dashboard JSON | [`observability/grafana/dashboards/`](observability/grafana/dashboards/) |
 | k6 load test | [`loadtest/checkout-flow.js`](loadtest/checkout-flow.js) |
@@ -21,41 +20,7 @@ This fork instruments the **order placement flow** with OpenTelemetry. Every cus
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        nopCommerce                              │
-│                                                                 │
-│  Browser ──► CheckoutController (Nop.Web)                       │
-│                       │                                         │
-│                       ▼                                         │
-│           OrderProcessingService (Nop.Services)                 │
-│             │  ┌──────────────────────────────┐                 │
-│             │  │  ActivitySource spans:        │                 │
-│             │  │  • order.placement (full)     │                 │
-│             │  │  • order.payment              │                 │
-│             │  │  • event.publish (decorator)  │                 │
-│             │  └──────────────────────────────┘                 │
-│             │                                                   │
-│             ▼                                                   │
-│           IEventPublisher  ◄── ObservabilityEventPublisher      │
-│             └─► OrderPlacedEvent, OrderPaidEvent, ...           │
-│                                                                 │
-│  OTel SDK  ──►  PiiScrubProcessor  ──►  OTLP exporter           │
-└────────────────────────────┬────────────────────────────────────┘
-                             │ gRPC :4317
-                             ▼
-                    ┌─────────────────┐
-                    │  OTel Collector │  fans out:
-                    └────┬───────┬───┘
-                         │       │
-                    traces│       │metrics (scrape)
-                         ▼       ▼
-                      Tempo   Prometheus
-                         │       │
-                         └───┬───┘
-                             ▼
-                          Grafana :3000
-```
+![Architecture](docs/architecture.png)
 
 ### Layer Stack
 
