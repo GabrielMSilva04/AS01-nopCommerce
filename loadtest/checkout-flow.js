@@ -29,7 +29,7 @@ import { Rate, Trend, Counter } from 'k6/metrics';
 // ────────────────────────────────────────────────────────────────────────────────
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost';
-const SCENARIO  = __ENV.SCENARIO  || 'smoke'; // smoke | load | stress
+const SCENARIO  = __ENV.SCENARIO  || 'smoke'; // smoke | demo | load | stress
 
 const checkoutDuration         = new Trend('checkout_flow_duration', true);
 const checkoutSuccessRate      = new Rate('checkout_success_rate');
@@ -68,6 +68,12 @@ const scenarios = {
             { duration: '2m', target: 0 },
         ],
         gracefulRampDown: '30s',
+    },
+    demo: {
+        executor: 'constant-vus',
+        vus: 3,
+        duration: '2m',
+        gracefulStop: '10s',
     },
 };
 
