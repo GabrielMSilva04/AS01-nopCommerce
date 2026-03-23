@@ -13,6 +13,9 @@ services:
       # Route all OTLP telemetry through the collector
       OpenTelemetry__OtlpEndpoint: "http://otel-collector:4317"
       OpenTelemetry__ServiceName: "nopcommerce"
+    volumes:
+      # Pre-configured connection string — skips the installation wizard after DB restore
+      - ./App_Data/appsettings.json:/app/App_Data/appsettings.json
     depends_on:
       nopcommerce_database:
         condition: service_healthy
