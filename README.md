@@ -86,6 +86,7 @@ Available scenarios (set via environment variable):
 k6 run -e SCENARIO=smoke  loadtest/checkout-flow.js   # 1 VU, 1 min  (default)
 k6 run -e SCENARIO=load   loadtest/checkout-flow.js   # ramp to 10 VUs, 14 min
 k6 run -e SCENARIO=stress loadtest/checkout-flow.js   # ramp to 50 VUs, 30 min
+k6 run -e SCENARIO=demo   loadtest/checkout-flow.js   # 3 good VUs + 1 bad VU, 2 min
 ```
 
 ### 5. Open the dashboard
@@ -120,13 +121,20 @@ HTTP POST /checkout/confirm           (ASP.NET Core auto-instrumentation)
 | `order.placement.duration` (ms) | Histogram | End-to-end order placement latency. Operational use: rising p95 signals checkout pipeline degradation before users start seeing timeouts. |
 | `order.payment.failures` | Counter | Payment processing failures tagged by error reason. Operational use: distinguishes gateway outages (all errors the same) from declined cards (varied). |
 
-### Grafana Dashboard Panels
+### Grafana Dashboard
+
+![Grafana dashboard screenshot](docs/screenshots/grafana-dashboard.png)
+
+Panels:
 
 1. **Orders Placed (last 1 h)** — `max(order_placement_duration_ms_count)` stat
 2. **Payment Failures** — `max(order_payment_failures_total)` stat
-3. **Checkout Error Rate** — `rate(http_server_request_duration_count{...status_code=~"5.*"})` timeseries
-4. **Order Placement Duration p95** — `histogram_quantile(0.95, ...)` timeseries
-5. **Order Placement Traces** — Tempo trace panel (TraceQL search on service `nopcommerce`)
+3. **Checkout Error Rate (4xx+5xx)** — fraction of checkout requests returning errors
+4. **Order Placement Duration p50/p95/p99** — `histogram_quantile(...)` timeseries
+5. **Order Placement Rate — Success vs Failure** — throughput split by outcome
+6. **Checkout Step Throughput** — request rate per checkout route (funnel view)
+7. **Checkout HTTP Error Rate — 4xx vs 5xx** — error breakdown by class
+8. **Order Placement Traces** — Tempo trace panel (TraceQL search on service `nopcommerce`)
 
 ---
 

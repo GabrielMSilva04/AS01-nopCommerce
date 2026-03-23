@@ -29,7 +29,9 @@ done
 echo "   SQL Server ready."
 
 echo "→ Restoring database..."
+docker exec -u root nopcommerce_mssql_server mkdir -p /var/opt/mssql/backup
 docker cp "$SCRIPT_DIR/nopcommerce.bak" nopcommerce_mssql_server:/var/opt/mssql/backup/nopcommerce.bak
+docker exec -u root nopcommerce_mssql_server chmod 777 /var/opt/mssql/backup/nopcommerce.bak
 docker exec nopcommerce_mssql_server \
   /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "nopCommerce_db_password" -No \
   -Q "RESTORE DATABASE nopCommerce FROM DISK = '/var/opt/mssql/backup/nopcommerce.bak' WITH REPLACE, MOVE 'nopCommerce' TO '/var/opt/mssql/data/nopCommerce.mdf', MOVE 'nopCommerce_log' TO '/var/opt/mssql/data/nopCommerce_log.ldf'"
@@ -37,6 +39,11 @@ echo "   Database restored."
 
 echo "→ Starting full stack..."
 docker compose up -d
+
+echo "→ Restoring plugins.json..."
+until docker exec nopcommerce true 2>/dev/null; do sleep 1; done
+docker cp "$SCRIPT_DIR/plugins.json" nopcommerce:/app/App_Data/plugins.json
+docker restart nopcommerce
 
 echo ""
 echo "✓ Ready. Store at http://localhost  |  Grafana at http://localhost:3000"

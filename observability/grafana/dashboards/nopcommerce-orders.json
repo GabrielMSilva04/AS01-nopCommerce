@@ -3,7 +3,7 @@
   "uid": "nop-order-flow",
   "description": "End-to-end health of the checkout pipeline: latency, payment failures, HTTP errors and distributed traces. All panels share the same time range — narrow it to zoom into an incident.",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "10s",
   "time": { "from": "now-30m", "to": "now" },
   "timezone": "browser",
@@ -100,8 +100,8 @@
     {
       "id": 4,
       "type": "stat",
-      "title": "Checkout Error Rate",
-      "description": "Fraction of checkout HTTP requests that returned 5xx. Even a small percentage means customers are hitting errors.",
+      "title": "Checkout Error Rate (4xx+5xx)",
+      "description": "Fraction of checkout HTTP requests that returned 4xx or 5xx. 4xx includes expired-session rejections (antiforgery 400); 5xx means server-side failures.",
       "gridPos": { "x": 16, "y": 1, "w": 8, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "options": {
@@ -131,7 +131,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\", url_route=~\".*(checkout|Checkout).*\"}[5m])) / sum(rate(http_server_request_duration_seconds_count{url_route=~\".*(checkout|Checkout).*\"}[5m]))",
+          "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"[45]..\", http_route=~\".*(checkout|Checkout).*\"}[5m])) / sum(rate(http_server_request_duration_seconds_count{http_route=~\".*(checkout|Checkout).*\"}[5m]))",
           "legendFormat": "error rate",
           "refId": "A"
         }
@@ -211,8 +211,8 @@
     {
       "id": 8,
       "type": "timeseries",
-      "title": "Payment Failures — Rate by Reason",
-      "description": "Rate of payment failures grouped by the first error returned by the payment plugin. Gateway outages produce a single dominant reason; card declines produce a variety of reasons. Use this to decide whether to page the gateway team or treat it as noise.",
+      "title": "Order Placement Rate — Success vs Failure",
+      "description": "Rate of orders completing PlaceOrderAsync, split by outcome. Under normal load only the success=true line is visible. A failure line appearing means the pipeline returned an error (payment rejection, stock issue, or exception) — cross-reference with traces to find the cause.",
       "gridPos": { "x": 0, "y": 15, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "options": {
@@ -223,13 +223,17 @@
         "defaults": {
           "unit": "reqps",
           "custom": { "lineWidth": 2, "fillOpacity": 10 }
-        }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "true" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byName", "options": "false" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
       },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum by (failure_reason) (rate(order_payment_failures_total[5m]))",
-          "legendFormat": "{{ failure_reason }}",
+          "expr": "sum by (success) (rate(order_placement_duration_milliseconds_count[2m]))",
+          "legendFormat": "{{ success }}",
           "refId": "A"
         }
       ]
@@ -259,15 +263,42 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\", url_route=~\".*(checkout|Checkout).*\"}[5m]))",
+          "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\", http_route=~\".*(checkout|Checkout).*\"}[5m]))",
           "legendFormat": "5xx",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"4..\", url_route=~\".*(checkout|Checkout).*\"}[5m]))",
+          "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"4..\", http_route=~\".*(checkout|Checkout).*\"}[5m]))",
           "legendFormat": "4xx",
           "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Checkout Step Throughput",
+      "description": "Request rate per checkout step, derived from ASP.NET Core HTTP metrics. More requests at billing than at confirm indicates funnel drop-off. A step going to zero means users cannot progress past it.",
+      "gridPos": { "x": 0, "y": 23, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "mean"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "lineWidth": 2, "fillOpacity": 5, "spanNulls": false }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (http_route) (rate(http_server_request_duration_seconds_count{http_route=~\".*(checkout|Checkout).*\", http_request_method=\"POST\"}[2m]))",
+          "legendFormat": "{{ http_route }}",
+          "refId": "A"
         }
       ]
     },
@@ -276,7 +307,7 @@
       "id": 10,
       "type": "row",
       "title": "Traces",
-      "gridPos": { "x": 0, "y": 23, "w": 24, "h": 1 },
+      "gridPos": { "x": 0, "y": 31, "w": 24, "h": 1 },
       "collapsed": false
     },
 
@@ -285,7 +316,7 @@
       "type": "table",
       "title": "Order Placement Traces",
       "description": "Recent distributed traces for the order placement flow. Each row is one request — click the Trace ID link to open the full span waterfall in Tempo and see exactly where time was spent (HTTP handler → payment → DB persistence → domain events).",
-      "gridPos": { "x": 0, "y": 24, "w": 24, "h": 12 },
+      "gridPos": { "x": 0, "y": 32, "w": 24, "h": 12 },
       "datasource": { "type": "tempo", "uid": "tempo" },
       "options": {
         "frameType": "Trace",

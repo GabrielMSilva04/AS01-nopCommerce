@@ -77,10 +77,27 @@ const scenarios = {
     },
 };
 
-export const options = {
-    scenarios: {
-        checkout_flow: scenarios[SCENARIO],
+const demoScenarios = {
+    good_users: {
+        executor: 'constant-vus',
+        exec: 'default',
+        vus: 3,
+        duration: '2m',
+        gracefulStop: '10s',
     },
+    bad_users: {
+        executor: 'constant-vus',
+        exec: 'badCheckout',
+        vus: 1,
+        duration: '2m',
+        gracefulStop: '10s',
+    },
+};
+
+export const options = {
+    scenarios: SCENARIO === 'demo'
+        ? demoScenarios
+        : { checkout_flow: scenarios[SCENARIO] },
     thresholds: {
         'http_req_duration':    ['p(95)<2000', 'p(99)<5000'],
         'http_req_failed':      ['rate<0.05'],
@@ -253,8 +270,8 @@ export default function () {
                 'BillingNewAddress.FirstName':      'Load',
                 'BillingNewAddress.LastName':       'Test',
                 'BillingNewAddress.Email':          `loadtest${Date.now()}@example.com`,
-                'BillingNewAddress.CountryId':      '1',  // United States
-                'BillingNewAddress.StateProvinceId': '5', // California
+                'BillingNewAddress.CountryId':      '237', // United States of America
+                'BillingNewAddress.StateProvinceId': '1797', // California
                 'BillingNewAddress.City':           'San Francisco',
                 'BillingNewAddress.Address1':       '123 Test Street',
                 'BillingNewAddress.ZipPostalCode':  '94102',
@@ -295,7 +312,7 @@ export default function () {
             }
         );
 
-        const ok = check(res, {
+const ok = check(res, {
             'Shipping method accepted': (r) => r.status === 302,
         });
         if (!ok) { checkoutSuccessRate.add(false); return; }
@@ -391,6 +408,98 @@ export default function () {
     });
 
     checkoutDuration.add(Date.now() - startTime);
+}
+
+// ────────────────────────────────────────────────────────────────────────────────
+// Bad checkout — simulates expired-session / CSRF failure on confirm
+//
+// Completes the checkout flow up to the confirm page, then POSTs /checkout/confirm
+// with a stale antiforgery token.  ASP.NET Core's antiforgery middleware rejects
+// the request with HTTP 400, which is recorded by the ASP.NET Core OTel
+// instrumentation and surfaces in the "Checkout HTTP Error Rate — 4xx vs 5xx"
+// Grafana panel.  This mirrors a common production failure: a customer who leaves
+// the confirm page open for too long and clicks "Place Order" after their session
+// has expired.
+// ────────────────────────────────────────────────────────────────────────────────
+
+export function badCheckout() {
+    let res, token;
+
+    // Complete the full checkout flow so the session is in a valid confirm state
+    http.get(`${BASE_URL}/cell-phones`, { tags: { name: 'Category (bad)' } });
+
+    res = http.get(`${BASE_URL}/nokia-lumia-1020`, { tags: { name: 'Product (bad)' } });
+    token = getVerificationToken(res);
+    shortPause();
+
+    http.post(`${BASE_URL}/addproducttocart/catalog/36/1/1`,
+        `__RequestVerificationToken=${token}`,
+        { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' }, tags: { name: 'Add to Cart (bad)' } }
+    );
+
+    res = http.get(`${BASE_URL}/cart`, { tags: { name: 'Cart (bad)' } });
+    token = getVerificationToken(res) || token;
+    const cartPayload = { __RequestVerificationToken: token, checkout: 'checkout' };
+    http.post(`${BASE_URL}/cart`, cartPayload, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, redirects: 0, tags: { name: 'Cart Submit (bad)' } });
+    thinkTime();
+
+    res = http.get(`${BASE_URL}/checkout/billingaddress`, { tags: { name: 'Billing (bad)' } });
+    token = getVerificationToken(res);
+
+    res = http.post(`${BASE_URL}/checkout/billingaddress`, {
+        __RequestVerificationToken: token, nextstep: 'nextstep',
+        'BillingNewAddress.FirstName': 'Expired', 'BillingNewAddress.LastName': 'Session',
+        'BillingNewAddress.Email': `expired${Date.now()}@example.com`,
+        'BillingNewAddress.CountryId': '237', 'BillingNewAddress.StateProvinceId': '1797',
+        'BillingNewAddress.City': 'San Francisco', 'BillingNewAddress.Address1': '1 Timeout St',
+        'BillingNewAddress.ZipPostalCode': '94102', 'BillingNewAddress.PhoneNumber': '555-0000',
+        ShipToSameAddress: 'true',
+    }, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, redirects: 0, tags: { name: 'Billing Submit (bad)' } });
+
+    const shipRedirect = res.headers['Location'] || res.headers['location'];
+    res = http.get(`${BASE_URL}${shipRedirect}`, { tags: { name: 'Shipping (bad)' } });
+    token = getVerificationToken(res);
+
+    res = http.post(`${BASE_URL}/checkout/shippingmethod`, {
+        __RequestVerificationToken: token, nextstep: 'nextstep',
+        shippingoption: 'Ground___Shipping.FixedByWeightByTotal',
+    }, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, redirects: 0, tags: { name: 'Shipping Method (bad)' } });
+
+    const pmRedirect = res.headers['Location'] || res.headers['location'];
+    res = http.get(`${BASE_URL}${pmRedirect}`, { tags: { name: 'Payment Method (bad)' } });
+    token = getVerificationToken(res);
+
+    res = http.post(`${BASE_URL}/checkout/paymentmethod`, {
+        __RequestVerificationToken: token, nextstep: 'nextstep',
+        paymentmethod: 'Payments.CheckMoneyOrder',
+    }, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, redirects: 0, tags: { name: 'Payment Method Submit (bad)' } });
+
+    const piRedirect = res.headers['Location'] || res.headers['location'];
+    res = http.get(`${BASE_URL}${piRedirect}`, { tags: { name: 'Payment Info (bad)' } });
+    token = getVerificationToken(res);
+    thinkTime();
+
+    res = http.post(`${BASE_URL}/checkout/paymentinfo`, {
+        __RequestVerificationToken: token, nextstep: 'nextstep',
+    }, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, redirects: 0, tags: { name: 'Payment Info Submit (bad)' } });
+
+    const toConfirm = res.headers['Location'] || res.headers['location'];
+    if (toConfirm) {
+        http.get(`${BASE_URL}${toConfirm}`, { tags: { name: 'Confirm Page (bad)' } });
+    }
+    thinkTime();
+
+    // POST /checkout/confirm with a deliberately stale token — simulates the user
+    // leaving the confirm page open until their session expires, then clicking
+    // "Place Order".  ASP.NET Core antiforgery returns 400.
+    const staleToken = 'stale_' + Math.random().toString(36).slice(2);
+    res = http.post(`${BASE_URL}/checkout/confirm`, {
+        __RequestVerificationToken: staleToken, nextstep: 'nextstep',
+    }, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, tags: { name: 'Confirm (stale token)' } });
+
+    check(res, { 'confirm rejected (400)': (r) => r.status === 400 });
+    checkoutSuccessRate.add(false);
+    thinkTime();
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
