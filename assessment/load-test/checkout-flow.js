@@ -98,7 +98,14 @@ export const options = {
     scenarios: SCENARIO === 'demo'
         ? demoScenarios
         : { checkout_flow: scenarios[SCENARIO] },
-    thresholds: {
+    // Demo runs 1 bad VU alongside 3 good ones (intentional failures for Grafana signal),
+    // so checkout_success_rate and checks thresholds are relaxed accordingly.
+    thresholds: SCENARIO === 'demo' ? {
+        'http_req_duration':    ['p(95)<2000', 'p(99)<5000'],
+        'http_req_failed':      ['rate<0.30'],
+        'checkout_success_rate': ['rate>0.40'],
+        'checks':               ['rate>0.70'],
+    } : {
         'http_req_duration':    ['p(95)<2000', 'p(99)<5000'],
         'http_req_failed':      ['rate<0.05'],
         'checkout_success_rate': ['rate>0.90'],

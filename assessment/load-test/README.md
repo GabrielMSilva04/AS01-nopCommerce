@@ -11,18 +11,18 @@ Simulates the full checkout flow: browse → add to cart → billing → shippin
 
 ```bash
 # Smoke (1 VU, 1 min) — default
-k6 run loadtest/checkout-flow.js
+k6 run assessment/load-test/checkout-flow.js
 
 # Load (ramp to 10 VUs, 14 min)
-k6 run -e SCENARIO=load loadtest/checkout-flow.js
+k6 run -e SCENARIO=load assessment/load-test/checkout-flow.js
 
 # Stress (ramp to 50 VUs, 30 min)
-k6 run -e SCENARIO=stress loadtest/checkout-flow.js
+k6 run -e SCENARIO=stress assessment/load-test/checkout-flow.js
 ```
 
 Custom target URL:
 ```bash
-k6 run -e BASE_URL=http://your-host loadtest/checkout-flow.js
+k6 run -e BASE_URL=http://your-host assessment/load-test/checkout-flow.js
 ```
 
 ## Thresholds

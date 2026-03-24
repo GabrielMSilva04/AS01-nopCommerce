@@ -12,15 +12,15 @@ This fork instruments the **order placement flow** with OpenTelemetry. Every cus
 | Deliverable | Location |
 |---|---|
 | Instrumentation critique | [`CRITIQUE.md`](CRITIQUE.md) |
-| Grafana dashboard JSON | [`observability/grafana/dashboards/`](observability/grafana/dashboards/) |
-| k6 load test | [`loadtest/checkout-flow.js`](loadtest/checkout-flow.js) |
+| Grafana dashboard JSON | [`assessment/observability/grafana/dashboards/`](assessment/observability/grafana/dashboards/) |
+| k6 load test | [`assessment/load-test/checkout-flow.js`](assessment/load-test/checkout-flow.js) |
 | OTel startup config | [`src/Presentation/Nop.Web.Framework/Infrastructure/ObservabilityStartup.cs`](src/Presentation/Nop.Web.Framework/Infrastructure/ObservabilityStartup.cs) |
 
 ---
 
 ## Architecture
 
-![Architecture](docs/architecture.png)
+![Architecture](assessment/diagrams/architecture.png)
 
 ### Layer Stack
 
@@ -77,16 +77,16 @@ The first start takes 3–5 minutes. nopCommerce will run the store wizard on fi
 
 ```bash
 # Install k6: https://k6.io/docs/get-started/installation/
-k6 run loadtest/checkout-flow.js
+k6 run assessment/load-test/checkout-flow.js
 ```
 
 Available scenarios (set via environment variable):
 
 ```bash
-k6 run -e SCENARIO=smoke  loadtest/checkout-flow.js   # 1 VU, 1 min  (default)
-k6 run -e SCENARIO=load   loadtest/checkout-flow.js   # ramp to 10 VUs, 14 min
-k6 run -e SCENARIO=stress loadtest/checkout-flow.js   # ramp to 50 VUs, 30 min
-k6 run -e SCENARIO=demo   loadtest/checkout-flow.js   # 3 good VUs + 1 bad VU, 2 min
+k6 run -e SCENARIO=smoke  assessment/load-test/checkout-flow.js   # 1 VU, 1 min  (default)
+k6 run -e SCENARIO=load   assessment/load-test/checkout-flow.js   # ramp to 10 VUs, 14 min
+k6 run -e SCENARIO=stress assessment/load-test/checkout-flow.js   # ramp to 50 VUs, 30 min
+k6 run -e SCENARIO=demo   assessment/load-test/checkout-flow.js   # 3 good VUs + 1 bad VU, 2 min
 ```
 
 ### 5. Open the dashboard
@@ -123,7 +123,7 @@ HTTP POST /checkout/confirm           (ASP.NET Core auto-instrumentation)
 
 ### Grafana Dashboard
 
-![Grafana dashboard screenshot](docs/screenshots/grafana-dashboard.png)
+![Grafana dashboard screenshot](assessment/dashboards/screenshots/grafana-dashboard.png)
 
 Panels:
 
@@ -159,9 +159,10 @@ docker restart nopcommerce
 
 ## Load Test Results (reference run)
 
-| Scenario | VUs | Duration | Orders placed | Success rate | p95 latency |
+| Scenario | VUs | Duration | Orders placed | Success rate | p(95) HTTP |
 |---|---|---|---|---|---|
-| smoke | 1 | 1 min | 1 | 100% | ~120 ms |
-| load | 10 | 14 min | 214 | 100% | 119 ms |
+| smoke | 1 | 1 min | 2 | 100% | 90 ms |
+| demo | 3+1 | 2 min | 9 good / 8 bad | 53% intentional | 93 ms |
+| load | 10 | 14 min | 215 | 100% | 109 ms |
 
-All HTTP requests: 0% failure rate. All 18 checkout checks passing at 100%.
+smoke/load: 0% HTTP failure rate. demo: 2.57% failure rate (antiforgery 400s from bad VU — expected).

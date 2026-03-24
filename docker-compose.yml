@@ -46,7 +46,7 @@ services:
     image: otel/opentelemetry-collector-contrib:0.147.0
     container_name: otel-collector
     volumes:
-      - ./observability/otel-collector-config.yml:/etc/otelcol-contrib/config.yaml
+      - ./assessment/observability/otel-collector-config.yml:/etc/otelcol-contrib/config.yaml
     ports:
       - "4317:4317"   # OTLP gRPC (nopCommerce sends here)
       - "4318:4318"   # OTLP HTTP (optional)
@@ -60,7 +60,7 @@ services:
     container_name: tempo
     command: ["-config.file=/etc/tempo.yml"]
     volumes:
-      - ./observability/tempo.yml:/etc/tempo.yml
+      - ./assessment/observability/tempo.yml:/etc/tempo.yml
       - tempo_data:/var/tempo
     ports:
       - "3200:3200"   # HTTP API (Grafana queries here)
@@ -70,7 +70,7 @@ services:
     image: prom/prometheus:v3.10.0
     container_name: prometheus
     volumes:
-      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./assessment/observability/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
     ports:
       - "9090:9090"
@@ -84,8 +84,8 @@ services:
     image: grafana/grafana:12.4.1
     container_name: grafana
     volumes:
-      - ./observability/grafana/provisioning:/etc/grafana/provisioning
-      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./assessment/observability/grafana/provisioning:/etc/grafana/provisioning
+      - ./assessment/observability/grafana/dashboards:/var/lib/grafana/dashboards
       - grafana_data:/var/lib/grafana
     environment:
       GF_SECURITY_ADMIN_USER: "admin"
